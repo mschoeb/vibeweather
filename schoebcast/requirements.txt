@@ -9,3 +9,5 @@ scikit-learn
 scoringrules
 matplotlib
 ipykernel
+eccodes
+requests

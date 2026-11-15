@@ -10,10 +10,12 @@ Every input feature is chosen so it can be fetched in real time from MeteoSwiss 
 schoebcast/
 ├── core/
 │   ├── data.py          # PeakWeather KLO loader, 36h-gapped seasonal splits, FeatureScaler & DataLoaders
+│   ├── live.py          # Live MeteoSwiss STAC (ICON-CH1 GRIB2 + SMN CSV) fetcher & inference pipeline
 │   ├── model.py         # SchoebcastGRU residual network, masked Huber training, checkpoint save/load
 │   └── utils.py         # Paths/constants, MAE/RMSE/Bias metrics, timeline & forecast plotting
-├── data/                # Local PeakWeather cache (gitignored: observations/*.parquet, icon/*.zarr)
-├── models/              # Saved PyTorch checkpoints + scalers (gitignored)
+├── data/                # Local PeakWeather & live JSON cache (gitignored)
+├── models/              # Saved PyTorch checkpoints + scalers (production schoebcast_klo_gru.pt tracked)
+├── infer_live.py        # CLI entrypoint producing live klo.json from MeteoSwiss OGD (~15s)
 ├── schoebcast.ipynb     # Main interactive workflow (data -> baseline -> train & evaluate)
 ├── testing.ipynb        # Scratchpad notebook
 └── requirements.txt     # Python dependencies (.venv)
@@ -28,6 +30,18 @@ Activate the workspace `.venv`, install dependencies from `requirements.txt`, an
 ```
 
 *(Note: `PeakWeatherDataset` automatically downloads required parquet/zarr files into `data/` on first run.)*
+
+## Live Operational Inference (`infer_live.py`)
+
+Fetch the latest complete 3-hourly **ICON-CH1-EPS** run (`T_2M`, `U_10M`, `V_10M` across 11 realizations and `+1h..+33h`, sliced in memory at KLO cell `idx=791189` via `eccodes`) + live **SwissMetNet** 24h `KLO` observations, run `SchoebcastGRU`, and emit a compact `~6 KB` `klo.json` payload for `meteoschoeb`:
+
+```powershell
+# Generate schoebcast/data/live/klo.json (~15s)
+..\.venv\Scripts\python.exe infer_live.py
+
+# Fast no-op check (~1s) used by scheduled CI when reftime is unchanged
+..\.venv\Scripts\python.exe infer_live.py --check-existing data/live/klo.json --out data/live/klo.json
+```
 
 ## Data & Split Design (v1 — KLO Temperature)
 
@@ -58,4 +72,4 @@ A compact `18,017`-parameter residual Encoder–Decoder GRU (`y_hat = icon_temp_
 
 - **Extra real-time features**: Add `sunshine` & `humidity` (ICON + KLO obs), `LAE` (Lägern 845m) 24h temperature delta for live inversion strength, solar elevation angle, and ICON ensemble quantiles (`p10`/`p50`/`p90`).
 - **Probabilistic & multi-variable outputs**: Predict uncertainty bands (`q10`/`q50`/`q90` or `μ, σ`) and expand targets to wind, precipitation, and sunshine.
-- **Operational inference**: Fetch live MeteoSwiss STAC (`ogd-forecasting-icon-ch1` + `ogd-smn`) and serve postprocessed forecasts to `meteoschoeb`.
+- **Automated hosting**: Scheduled GitHub Actions workflow publishing `data/klo.json` to `gh-pages` alongside the `meteoschoeb` Flutter Web app.
