@@ -1,0 +1,11 @@
+peakweather>=0.2.2
+torch
+numpy
+pandas
+pyarrow
+xarray
+zarr>=3.0.0
+scikit-learn
+scoringrules
+matplotlib
+ipykernel

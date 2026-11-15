@@ -1,0 +1,1 @@
+When working in general i want us to take small iterative steps together, dont ever go off and do big amounts of work unless explicity instructed to. 
