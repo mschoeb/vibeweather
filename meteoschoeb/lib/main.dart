@@ -5,7 +5,8 @@ import 'package:intl/intl.dart';
 
 import 'models/weather_models.dart';
 import 'services/weather_service.dart';
-import 'widgets/forecast_chart.dart';
+import 'widgets/historic_runs_panel.dart';
+import 'widgets/temperature_forecast_card.dart';
 
 void main() {
   runApp(const MeteoSchoebApp());
@@ -55,8 +56,6 @@ class WeatherHomePage extends StatefulWidget {
 
 class _WeatherHomePageState extends State<WeatherHomePage> {
   late Future<WeatherBundle> _weatherFuture;
-  bool _showRawIcon = true;
-  bool _showSpread = true;
 
   @override
   void initState() {
@@ -146,7 +145,19 @@ class _WeatherHomePageState extends State<WeatherHomePage> {
                       const SizedBox(height: 12),
                       _buildHeroCard(bundle),
                       const SizedBox(height: 16),
-                      _buildTemperatureCard(bundle),
+                      TemperatureForecastCard(
+                        title: 'Temperature Forecast (33h)',
+                        forecast: bundle.forecast,
+                        liveObservations: bundle.liveObservations,
+                      ),
+                      if (bundle.historyRuns.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        HistoricRunsPanel(
+                          service: widget.service,
+                          runs: bundle.historyRuns,
+                          latestForecast: bundle.forecast,
+                        ),
+                      ],
                       const SizedBox(height: 20),
                       _buildFooter(bundle.forecast),
                     ],
@@ -371,126 +382,6 @@ class _WeatherHomePageState extends State<WeatherHomePage> {
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTemperatureCard(WeatherBundle bundle) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 18, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Temperature Forecast (33h)',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                ),
-                _toggleChip(
-                  label: 'Raw ICON',
-                  active: _showRawIcon,
-                  color: const Color(0xFF60A5FA),
-                  onTap: () => setState(() => _showRawIcon = !_showRawIcon),
-                ),
-                const SizedBox(width: 6),
-                _toggleChip(
-                  label: 'Spread',
-                  active: _showSpread,
-                  color: const Color(0xFF60A5FA),
-                  onTap: () => setState(() => _showSpread = !_showSpread),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 14,
-              runSpacing: 6,
-              children: [
-                _legendItem(const Color(0xFF2DD4BF), 'Schoebcast'),
-                if (_showRawIcon)
-                  _legendItem(const Color(0xFF60A5FA), 'ICON mean', dashed: true),
-                if (_showSpread)
-                  _legendItem(
-                    const Color(0xFF60A5FA).withValues(alpha: 0.35),
-                    'ICON p10–p90',
-                    isBox: true,
-                  ),
-                _legendItem(const Color(0xFFF8FAFC), 'Observed KLO'),
-              ],
-            ),
-            const SizedBox(height: 16),
-            ForecastChart(
-              bundle: bundle,
-              showRawIcon: _showRawIcon,
-              showSpread: _showSpread,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _toggleChip({
-    required String label,
-    required bool active,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: active
-              ? color.withValues(alpha: 0.16)
-              : Colors.white.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: active
-                ? color.withValues(alpha: 0.5)
-                : Colors.white.withValues(alpha: 0.1),
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: active ? color : const Color(0xFF94A3B8),
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _legendItem(
-    Color color,
-    String label, {
-    bool dashed = false,
-    bool isBox = false,
-  }) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 14,
-          height: isBox ? 10 : 3,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
-            border: dashed ? Border.all(color: color, width: 1) : null,
-          ),
-        ),
-        const SizedBox(width: 5),
-        Text(
-          label,
-          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
         ),
       ],
     );

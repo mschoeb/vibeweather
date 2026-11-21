@@ -63,6 +63,7 @@ class ForecastHourly {
     required this.iconWindSpeedMinMs,
     required this.iconWindSpeedMaxMs,
     required this.iconWindDirDeg,
+    this.actualTempC = const [],
   });
 
   final List<DateTime> timestamps;
@@ -77,10 +78,12 @@ class ForecastHourly {
   final List<double> iconWindSpeedMinMs;
   final List<double> iconWindSpeedMaxMs;
   final List<double> iconWindDirDeg;
+  final List<double?> actualTempC;
 
   int get length => timestamps.length;
 
   factory ForecastHourly.fromJson(Map<String, dynamic> json) {
+    final rawActual = json['actual_temp_c'] as List<dynamic>?;
     return ForecastHourly(
       timestamps: (json['timestamps'] as List<dynamic>)
           .map((e) => DateTime.parse(e as String).toUtc())
@@ -96,6 +99,9 @@ class ForecastHourly {
       iconWindSpeedMinMs: _toDoubleList(json['icon_wind_speed_min_ms']),
       iconWindSpeedMaxMs: _toDoubleList(json['icon_wind_speed_max_ms']),
       iconWindDirDeg: _toDoubleList(json['icon_wind_dir_deg']),
+      actualTempC: rawActual == null
+          ? const []
+          : rawActual.map((e) => e == null ? null : (e as num).toDouble()).toList(),
     );
   }
 }
@@ -154,14 +160,45 @@ class LiveObservation {
   final double? precipMm;
 }
 
+class HistoryRunEntry {
+  const HistoryRunEntry({
+    required this.reftime,
+    required this.file,
+    required this.model,
+    required this.verifiedHours,
+    this.maeSchoebcast,
+    this.maeIcon,
+  });
+
+  final DateTime reftime;
+  final String file;
+  final String model;
+  final int verifiedHours;
+  final double? maeSchoebcast;
+  final double? maeIcon;
+
+  factory HistoryRunEntry.fromJson(Map<String, dynamic> json) {
+    return HistoryRunEntry(
+      reftime: DateTime.parse(json['reftime'] as String).toUtc(),
+      file: json['file'] as String,
+      model: json['model'] as String? ?? 'schoebcast_klo_gru_v1',
+      verifiedHours: (json['verified_hours'] as num?)?.toInt() ?? 0,
+      maeSchoebcast: (json['mae_schoebcast'] as num?)?.toDouble(),
+      maeIcon: (json['mae_icon'] as num?)?.toDouble(),
+    );
+  }
+}
+
 class WeatherBundle {
   const WeatherBundle({
     required this.forecast,
     required this.liveObservations,
+    this.historyRuns = const [],
   });
 
   final KloForecast forecast;
   final List<LiveObservation> liveObservations;
+  final List<HistoryRunEntry> historyRuns;
 
   LiveObservation? get latestObservation {
     for (int i = liveObservations.length - 1; i >= 0; i--) {

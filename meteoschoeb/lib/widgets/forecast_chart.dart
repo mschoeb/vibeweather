@@ -9,12 +9,14 @@ import '../models/weather_models.dart';
 class ForecastChart extends StatelessWidget {
   const ForecastChart({
     super.key,
-    required this.bundle,
+    required this.forecast,
+    this.liveObservations = const [],
     required this.showRawIcon,
     required this.showSpread,
   });
 
-  final WeatherBundle bundle;
+  final KloForecast forecast;
+  final List<LiveObservation> liveObservations;
   final bool showRawIcon;
   final bool showSpread;
 
@@ -22,7 +24,7 @@ class ForecastChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final klo = bundle.forecast;
+    final klo = forecast;
     final reftime = klo.reftime;
     final fh = klo.forecast;
     final lb = klo.lookback;
@@ -37,18 +39,30 @@ class ForecastChart extends StatelessWidget {
       lookbackSpots.add(FlSpot(hoursFromRef(lb.timestamps[i]), lb.temperatureC[i]));
     }
 
-    // Live 10-min observations after reftime (overlay onto active forecast!)
-    final liveSpots = <FlSpot>[];
+    // Actual observations after reftime: combine backfilled hourly actuals + any newer live 10-min obs
+    final observedSpots = <FlSpot>[];
     if (lookbackSpots.isNotEmpty) {
-      liveSpots.add(lookbackSpots.last);
+      observedSpots.add(lookbackSpots.last);
     }
-    for (final obs in bundle.liveObservations) {
+
+    double lastObservedX = 0.0;
+    for (int i = 0; i < fh.actualTempC.length && i < fh.length; i++) {
+      final actual = fh.actualTempC[i];
+      if (actual == null) continue;
+      final x = hoursFromRef(fh.timestamps[i]);
+      observedSpots.add(FlSpot(x, actual));
+      lastObservedX = x;
+    }
+
+    for (final obs in liveObservations) {
       if (obs.temperatureC == null) continue;
       final x = hoursFromRef(obs.timestampUtc);
-      if (x > 0 && x <= fh.length.toDouble()) {
-        liveSpots.add(FlSpot(x, obs.temperatureC!));
+      if (x > lastObservedX && x <= fh.length.toDouble()) {
+        observedSpots.add(FlSpot(x, obs.temperatureC!));
       }
     }
+
+    final liveSpots = observedSpots;
 
     final schoebSpots = <FlSpot>[];
     final iconMeanSpots = <FlSpot>[];
@@ -351,7 +365,7 @@ class ForecastChart extends StatelessWidget {
                     prefix = 'Raw ICON';
                     color = const Color(0xFF60A5FA);
                   } else if (bIdx == liveBarIdx) {
-                    prefix = 'Live KLO';
+                    prefix = 'Actual KLO';
                     color = const Color(0xFFF8FAFC);
                   } else if (bIdx == lookbackBarIdx) {
                     prefix = 'Observed';

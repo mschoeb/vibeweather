@@ -2,12 +2,12 @@ name: Update Schoebcast Forecast
 
 on:
   schedule:
-    # Check every 30 minutes; exits in ~10s when no new 3-hourly ICON-CH1 run is ready
+    # Check every 30 minutes; exits quickly when no new 3-hourly ICON-CH1 run is ready
     - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       force:
-        description: "Force regeneration even if reftime already matches live klo.json"
+        description: "Force regeneration & observation backfill even if latest reftime matches"
         required: false
         default: "false"
         type: boolean
@@ -36,34 +36,11 @@ jobs:
       - name: Install live inference dependencies
         run: pip install -r schoebcast/requirements-live.txt
 
-      - name: Fetch MeteoSwiss OGD and run SchoebcastGRU
+      - name: Clone gh-pages archive and run SchoebcastGRU
         id: infer
         env:
-          FORCE_RUN: ${{ inputs.force == true || inputs.force == 'true' }}
-        run: |
-          FORCE_FLAG=""
-          if [ "$FORCE_RUN" = "true" ]; then
-            FORCE_FLAG="--force"
-          fi
-          python -u schoebcast/infer_live.py \
-            --check-existing "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/klo.json" \
-            --out /tmp/klo.json \
-            --workers 12 \
-            $FORCE_FLAG
-
-          if [ -f /tmp/klo.json ]; then
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-            REFTIME=$(python -c "import json; print(json.load(open('/tmp/klo.json'))['reftime'])")
-            echo "reftime=$REFTIME" >> "$GITHUB_OUTPUT"
-          else
-            echo "updated=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish data/klo.json to gh-pages (single-commit squash)
-        if: steps.infer.outputs.updated == 'true'
-        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REFTIME: ${{ steps.infer.outputs.reftime }}
+          FORCE_RUN: ${{ inputs.force == true || inputs.force == 'true' }}
         run: |
           REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           WORK_DIR="/tmp/gh-pages"
@@ -78,7 +55,35 @@ jobs:
           fi
 
           mkdir -p "$WORK_DIR/data"
-          cp /tmp/klo.json "$WORK_DIR/data/klo.json"
+          BEFORE_HASH=$(sha256sum "$WORK_DIR/data/history.json" 2>/dev/null | awk '{print $1}' || echo "none")
+
+          FORCE_FLAG=""
+          if [ "$FORCE_RUN" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+
+          python -u schoebcast/infer_live.py \
+            --archive-dir "$WORK_DIR/data" \
+            --seed-missing \
+            --max-runs 56 \
+            --workers 12 \
+            $FORCE_FLAG
+
+          AFTER_HASH=$(sha256sum "$WORK_DIR/data/history.json" 2>/dev/null | awk '{print $1}' || echo "none")
+          if [ "$BEFORE_HASH" != "$AFTER_HASH" ]; then
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            REFTIME=$(python -c "import json; print(json.load(open('/tmp/gh-pages/data/klo.json'))['reftime'])")
+            echo "reftime=$REFTIME" >> "$GITHUB_OUTPUT"
+          else
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish updated data/ to gh-pages (single-commit squash)
+        if: steps.infer.outputs.updated == 'true'
+        env:
+          REFTIME: ${{ steps.infer.outputs.reftime }}
+        run: |
+          WORK_DIR="/tmp/gh-pages"
           touch "$WORK_DIR/.nojekyll"
 
           cd "$WORK_DIR"
@@ -86,5 +91,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --orphan gh-pages-fresh
           git add -A
-          git commit -m "Update KLO forecast (${REFTIME})"
+          git commit -m "Update KLO forecast & history (${REFTIME})"
           git push --force origin gh-pages-fresh:gh-pages

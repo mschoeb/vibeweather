@@ -10,39 +10,61 @@ class WeatherService {
 
   final http.Client _client;
 
-  static const String _hostedFallbackUrl =
-      'https://mschoeb.github.io/vibeweather/data/klo.json';
+  static const String _hostedBaseUrl = 'https://mschoeb.github.io/vibeweather/';
   static const String _smnNowUrl =
       'https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/klo/ogd-smn_klo_t_now.csv';
 
-  Uri _resolveForecastUri() {
+  Uri _resolveDataUri(String relativePath) {
     final cacheBust = DateTime.now().millisecondsSinceEpoch.toString();
     if (kIsWeb) {
       final host = Uri.base.host;
       final isLocal = host == 'localhost' || host == '127.0.0.1' || host.isEmpty;
       if (!isLocal) {
-        return Uri.base.resolve('data/klo.json?t=$cacheBust');
+        return Uri.base.resolve('$relativePath?t=$cacheBust');
       }
     }
-    return Uri.parse('$_hostedFallbackUrl?t=$cacheBust');
+    return Uri.parse('$_hostedBaseUrl$relativePath?t=$cacheBust');
   }
 
   Future<WeatherBundle> fetchWeather() async {
-    final forecastFuture = _fetchForecast();
+    final forecastFuture = _fetchForecast('data/klo.json');
     final liveObsFuture = _fetchLiveObservations().catchError((_) => <LiveObservation>[]);
+    final historyFuture = fetchHistoryIndex().catchError((_) => <HistoryRunEntry>[]);
 
-    final results = await Future.wait<dynamic>([forecastFuture, liveObsFuture]);
+    final results = await Future.wait<dynamic>([
+      forecastFuture,
+      liveObsFuture,
+      historyFuture,
+    ]);
     return WeatherBundle(
       forecast: results[0] as KloForecast,
       liveObservations: results[1] as List<LiveObservation>,
+      historyRuns: results[2] as List<HistoryRunEntry>,
     );
   }
 
-  Future<KloForecast> _fetchForecast() async {
-    final uri = _resolveForecastUri();
+  Future<KloForecast> fetchRunForecast(HistoryRunEntry entry) {
+    return _fetchForecast('data/${entry.file}');
+  }
+
+  Future<List<HistoryRunEntry>> fetchHistoryIndex() async {
+    final uri = _resolveDataUri('data/history.json');
+    final response = await _client.get(uri).timeout(const Duration(seconds: 12));
+    if (response.statusCode != 200) {
+      return const [];
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+    final runs = decoded['runs'] as List<dynamic>? ?? const [];
+    return runs
+        .map((e) => HistoryRunEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<KloForecast> _fetchForecast(String relativePath) async {
+    final uri = _resolveDataUri(relativePath);
     final response = await _client.get(uri).timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
-      throw Exception('Failed to load forecast (${response.statusCode})');
+      throw Exception('Failed to load $relativePath (${response.statusCode})');
     }
     final decoded = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
     return KloForecast.fromJson(decoded);

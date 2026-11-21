@@ -79,11 +79,11 @@ def _iso_horizon_to_lead(horizon_str: str) -> int:
     return int(round(td.total_seconds() / 3600.0))
 
 
-def find_latest_complete_reftime(
+def find_all_complete_reftimes(
     session: Optional[requests.Session] = None,
     horizon_size: int = HORIZON_SIZE,
-) -> str:
-    """Return the latest ICON-CH1-EPS reference_datetime (ISO UTC) where all variables
+) -> list[str]:
+    """Return all ICON-CH1-EPS reference_datetimes (ISO UTC, oldest->newest) where all variables
     have both control and perturbed GRIB2 assets published through +`horizon_size`h."""
     own_session = session is None
     session = session or _make_session(pool_maxsize=4)
@@ -119,10 +119,24 @@ def find_latest_complete_reftime(
         common_refs = sorted(set.intersection(*complete_per_var))
         if not common_refs:
             raise RuntimeError("No complete ICON-CH1-EPS runs found on MeteoSwiss STAC.")
-        return common_refs[-1]
+        return common_refs
     finally:
         if own_session:
             session.close()
+
+
+def find_latest_complete_reftime(
+    session: Optional[requests.Session] = None,
+    horizon_size: int = HORIZON_SIZE,
+) -> str:
+    """Return the latest complete ICON-CH1-EPS reference_datetime (ISO UTC)."""
+    return find_all_complete_reftimes(session=session, horizon_size=horizon_size)[-1]
+
+
+def reftime_to_slug(reftime_iso: str) -> str:
+    """Convert '2026-11-21T12:00:00Z' into a filesystem/URL-safe slug '2026-11-21T1200Z'."""
+    ts = pd.Timestamp(reftime_iso).tz_convert("UTC")
+    return ts.strftime("%Y-%m-%dT%H%MZ")
 
 
 def read_existing_reftime(path_or_url: Optional[str]) -> Optional[str]:
@@ -349,7 +363,7 @@ def generate_klo_forecast_payload(
         obs_bundle = fetch_klo_obs_window(reftime_iso, session=session)
         if verbose:
             t_last = obs_bundle["x_obs"][-1, 0]
-            print(f"[2/4] Loaded 24h KLO observations up to {reftime_iso} (t=0 temp: {t_last:.2f} °C)")
+            print(f"[2/4] Loaded 24h KLO observations up to {reftime_iso} (t=0 temp: {t_last:.2f} C)")
 
         t_dl = time.perf_counter()
         nwp_members = fetch_klo_icon_horizon(
@@ -440,8 +454,127 @@ def generate_klo_forecast_payload(
             mean_delta = float(np.mean(pred_temp - icon_temp_mean[0]))
             print(
                 f"[4/4] SchoebcastGRU inference complete in {dt:.1f}s total "
-                f"(mean ΔT vs ICON: {mean_delta:+.2f} °C)"
+                f"(mean dT vs ICON: {mean_delta:+.2f} C)"
             )
         return payload
     finally:
         session.close()
+
+
+def fetch_klo_hourly_temperature_series(
+    session: Optional[requests.Session] = None,
+    days_back: int = 10,
+) -> pd.Series:
+    """Fetch recent + today's KLO 10-min SMN CSVs and return hourly mean temperature (°C, UTC).
+
+    Matches PeakWeather's `closed="right", label="right"` hourly aggregation so backfilled
+    `actual_temp_c` aligns identically with training targets.
+    """
+    own_session = session is None
+    session = session or _make_session(pool_maxsize=4)
+    try:
+        r_rec = session.get(SMN_RECENT_URL, timeout=30)
+        r_rec.raise_for_status()
+        r_now = session.get(SMN_NOW_URL, timeout=20)
+        r_now.raise_for_status()
+
+        df_rec = pd.read_csv(io.StringIO(r_rec.text), sep=";", usecols=["reference_timestamp", "tre200s0"])
+        df_now = pd.read_csv(io.StringIO(r_now.text), sep=";", usecols=["reference_timestamp", "tre200s0"])
+        df = pd.concat([df_rec, df_now], ignore_index=True)
+
+        df["ts"] = pd.to_datetime(df["reference_timestamp"], format="%d.%m.%Y %H:%M", utc=True)
+        df = df.drop_duplicates(subset=["ts"], keep="last").sort_values("ts").set_index("ts")
+
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days_back)
+        df = df.loc[cutoff:]
+
+        temp_10m = pd.to_numeric(df["tre200s0"], errors="coerce").dropna()
+        if temp_10m.empty:
+            return pd.Series(dtype=float)
+
+        # Only emit completed hourly buckets (up to the latest observed 10-min timestamp)
+        last_obs_ts = temp_10m.index.max()
+        hourly = temp_10m.resample("1h", closed="right", label="right").mean()
+        return hourly.loc[:last_obs_ts].dropna()
+    finally:
+        if own_session:
+            session.close()
+
+
+def backfill_and_write_history(
+    data_dir: Path | str,
+    max_runs: int = 56,
+    session: Optional[requests.Session] = None,
+    verbose: bool = True,
+) -> dict[str, Any]:
+    """Prune `data_dir/runs/*.json` to `max_runs`, backfill `actual_temp_c`, and write `history.json`."""
+    data_dir = Path(data_dir)
+    runs_dir = data_dir / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    run_files = sorted(runs_dir.glob("*.json"))
+    if len(run_files) > max_runs:
+        for old_file in run_files[: len(run_files) - max_runs]:
+            old_file.unlink(missing_ok=True)
+        run_files = run_files[len(run_files) - max_runs :]
+
+    hourly_obs = fetch_klo_hourly_temperature_series(session=session)
+    obs_lookup = {
+        ts.strftime("%Y-%m-%dT%H:%M:%SZ"): round(float(val), 2)
+        for ts, val in hourly_obs.items()
+    }
+
+    entries: list[dict[str, Any]] = []
+    for path in sorted(run_files, reverse=True):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        fh = payload["forecast_hourly"]
+        timestamps = fh["timestamps"]
+        actuals: list[Optional[float]] = [obs_lookup.get(ts) for ts in timestamps]
+        fh["actual_temp_c"] = actuals
+
+        schoeb = fh["schoebcast_temp_c"]
+        icon = fh["icon_temp_mean_c"]
+        sc_errs = [abs(s - a) for s, a in zip(schoeb, actuals) if a is not None]
+        ic_errs = [abs(ic - a) for ic, a in zip(icon, actuals) if a is not None]
+
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
+        entries.append(
+            {
+                "reftime": payload["reftime"],
+                "file": f"runs/{path.name}",
+                "model": payload.get("model", "schoebcast_klo_gru_v1"),
+                "verified_hours": len(sc_errs),
+                "mae_schoebcast": round(float(np.mean(sc_errs)), 2) if sc_errs else None,
+                "mae_icon": round(float(np.mean(ic_errs)), 2) if ic_errs else None,
+            }
+        )
+
+    # Sort newest reftime first
+    entries.sort(key=lambda e: e["reftime"], reverse=True)
+
+    # Also keep data_dir/klo.json synced with the newest run (including any actual_temp_c)
+    if entries:
+        newest_path = data_dir / entries[0]["file"]
+        (data_dir / "klo.json").write_text(
+            newest_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+    history = {
+        "schema_version": 1,
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "runs": entries,
+    }
+    history_path = data_dir / "history.json"
+    history_path.write_text(
+        json.dumps(history, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+    if verbose:
+        print(f"Updated history archive: {len(entries)} runs -> {history_path}")
+    return history
