@@ -1,11 +1,11 @@
 {
-    "name": "meteoschoeb",
-    "short_name": "meteoschoeb",
+    "name": "MeteoSchoeb",
+    "short_name": "MeteoSchoeb",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0B1120",
+    "theme_color": "#0B1120",
+    "description": "Schoebcast postprocessed MeteoSwiss weather forecasts for Zürich Kloten (KLO).",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
