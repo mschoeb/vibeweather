@@ -1,0 +1,90 @@
+name: Update Schoebcast Forecast
+
+on:
+  schedule:
+    # Check every 30 minutes; exits in ~10s when no new 3-hourly ICON-CH1 run is ready
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force regeneration even if reftime already matches live klo.json"
+        required: false
+        default: "false"
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  update-forecast:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "schoebcast/requirements-live.txt"
+
+      - name: Install live inference dependencies
+        run: pip install -r schoebcast/requirements-live.txt
+
+      - name: Fetch MeteoSwiss OGD and run SchoebcastGRU
+        id: infer
+        env:
+          FORCE_RUN: ${{ inputs.force == true || inputs.force == 'true' }}
+        run: |
+          FORCE_FLAG=""
+          if [ "$FORCE_RUN" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+          python -u schoebcast/infer_live.py \
+            --check-existing "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/klo.json" \
+            --out /tmp/klo.json \
+            --workers 12 \
+            $FORCE_FLAG
+
+          if [ -f /tmp/klo.json ]; then
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            REFTIME=$(python -c "import json; print(json.load(open('/tmp/klo.json'))['reftime'])")
+            echo "reftime=$REFTIME" >> "$GITHUB_OUTPUT"
+          else
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish data/klo.json to gh-pages (single-commit squash)
+        if: steps.infer.outputs.updated == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REFTIME: ${{ steps.infer.outputs.reftime }}
+        run: |
+          REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          WORK_DIR="/tmp/gh-pages"
+          rm -rf "$WORK_DIR"
+
+          if git ls-remote --exit-code --heads "$REPO_URL" gh-pages >/dev/null 2>&1; then
+            git clone --branch gh-pages --single-branch --depth 1 "$REPO_URL" "$WORK_DIR"
+          else
+            mkdir -p "$WORK_DIR"
+            git -C "$WORK_DIR" init
+            git -C "$WORK_DIR" remote add origin "$REPO_URL"
+          fi
+
+          mkdir -p "$WORK_DIR/data"
+          cp /tmp/klo.json "$WORK_DIR/data/klo.json"
+          touch "$WORK_DIR/.nojekyll"
+
+          cd "$WORK_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan gh-pages-fresh
+          git add -A
+          git commit -m "Update KLO forecast (${REFTIME})"
+          git push --force origin gh-pages-fresh:gh-pages

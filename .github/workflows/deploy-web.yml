@@ -1,0 +1,67 @@
+name: Deploy MeteoSchoeb Web
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "meteoschoeb/**"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Build Flutter Web
+        working-directory: meteoschoeb
+        run: |
+          flutter pub get
+          flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+
+      - name: Publish Flutter Web to gh-pages (preserving data/)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          OLD_DIR="/tmp/gh-pages-old"
+          NEW_DIR="/tmp/gh-pages-new"
+          rm -rf "$OLD_DIR" "$NEW_DIR"
+          mkdir -p "$NEW_DIR"
+
+          # Preserve existing forecast data/ from gh-pages if present
+          if git ls-remote --exit-code --heads "$REPO_URL" gh-pages >/dev/null 2>&1; then
+            git clone --branch gh-pages --single-branch --depth 1 "$REPO_URL" "$OLD_DIR"
+            if [ -d "$OLD_DIR/data" ]; then
+              cp -r "$OLD_DIR/data" "$NEW_DIR/data"
+            fi
+          fi
+
+          # Copy fresh Flutter Web build
+          cp -r meteoschoeb/build/web/. "$NEW_DIR/"
+          touch "$NEW_DIR/.nojekyll"
+
+          cd "$NEW_DIR"
+          git init
+          git remote add origin "$REPO_URL"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b gh-pages
+          git add -A
+          git commit -m "Deploy meteoschoeb web (${GITHUB_SHA::7})"
+          git push --force origin gh-pages:gh-pages

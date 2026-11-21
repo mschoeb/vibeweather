@@ -3,7 +3,6 @@
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -76,6 +75,8 @@ def plot_split_timeline(
     splits: Mapping[str, np.ndarray],
 ) -> None:
     """Plot +1h KLO temperature across the full timeline colored by train/val/test."""
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots(figsize=(13, 3.5))
     colors = {"train": "tab:blue", "val": "tab:orange", "test": "tab:green"}
 
@@ -103,6 +104,8 @@ def plot_lead_metrics(
     split_label: str = "Test",
 ) -> None:
     """Plot MAE, RMSE, and Bias by forecast lead hour (1..H) for one or more models."""
+    import matplotlib.pyplot as plt
+
     first = next(iter(results.values()))
     leads = np.arange(1, len(first["mae_by_lead"]) + 1)
 
@@ -134,6 +137,8 @@ def plot_sample_forecast(
     extra_preds: Optional[Mapping[str, np.ndarray]] = None,
 ) -> None:
     """Plot one KLO forecast run: 24h lookback obs, 11 ICON members, ICON mean, and truth."""
+    import matplotlib.pyplot as plt
+
     reftime = raw_data["reftime"][run_idx]
     W = raw_data["x_obs"].shape[1]
     H = raw_data["y_temp"].shape[1]
@@ -184,6 +189,8 @@ def plot_training_history(
     baseline_val_mae: Optional[float] = None,
 ) -> None:
     """Plot training/validation loss and validation MAE curves across epochs."""
+    import matplotlib.pyplot as plt
+
     epochs = np.arange(1, len(history["train_loss"]) + 1)
     fig, axes = plt.subplots(1, 2, figsize=(11, 3.8))
 

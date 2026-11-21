@@ -7,7 +7,6 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 import torch
-from peakweather import PeakWeatherDataset
 from torch.utils.data import DataLoader, Dataset
 
 from .utils import DATA_DIR, FEATURES, HORIZON_SIZE, STATION, TARGET, WINDOW_SIZE
@@ -55,6 +54,8 @@ def load_klo_data(
     years: Sequence[int] = (2024, 2025),
 ) -> dict:
     """Load KLO observations aligned with ICON-CH1-EPS forecasts directly via PeakWeather."""
+    from peakweather import PeakWeatherDataset
+
     features = list(features)
     raw_obs_params = [p for p in features if p not in ("wind_u", "wind_v")]
     need_uv = "wind_u" in features or "wind_v" in features
